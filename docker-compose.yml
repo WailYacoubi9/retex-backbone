@@ -1,25 +1,36 @@
-# Backbone RETEX : services partages (donnees + inference).
-# Cree le reseau "retex-net" que retex-app et retex-ingestion rejoignent.
+# Backbone ia : services partages (donnees + inference).
+# Cree le reseau "ia-net" que ia-app et ia-ingestion rejoignent.
 #
-#   docker compose up -d
+#   cd ia-backbone && docker compose up -d
 #
-# Sur une machine SANS GPU : supprime le bloc "deploy:" du service ollama.
 services:
+
+  build:
+    image: nexus.intraknow.net/repository/docker/yieloo-app/ia/builder:3.13-beta-2
+    container_name: ia-build
+    restart: unless-stopped
+    volumes:
+      - ../ia-ingestion:/app
+      - .env.builder:/app/.env
+      - /mnt/data-dd01:/app/data/samples
+    networks:
+      - ia-net
 
   neo4j:
     image: nexus.intraknow.net/repository/docker/yieloo-app/ia/neo4j:5.24
-    container_name: retex-neo4j
+    container_name: ia-neo4j
+    restart: unless-stopped
     ports:
       - "7474:7474"
       - "7687:7687"
     environment:
-      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD}
+      NEO4J_AUTH: ${neo4j_login}/${neo4j_pwd}
       NEO4J_PLUGINS: '["apoc"]'
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
     networks:
-      - retex-net
+      - ia-net
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:7474 || exit 1"]
       interval: 10s
@@ -28,13 +39,14 @@ services:
 
   qdrant:
     image: nexus.intraknow.net/repository/docker/yieloo-app/ia/qdrant:v1.12.4
-    container_name: retex-qdrant
+    restart: unless-stopped
+    container_name: ia-qdrant
     ports:
       - "6333:6333"
     volumes:
       - qdrant_data:/qdrant/storage
     networks:
-      - retex-net
+      - ia-net
     healthcheck:
       test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333'"]
       interval: 10s
@@ -43,28 +55,63 @@ services:
 
   ollama:
     image: nexus.intraknow.net/repository/docker/yieloo-app/ia/ollama:latest
-    container_name: retex-ollama
+    restart: unless-stopped
+    container_name: ia-ollama
     ports:
       - "11434:11434"
     volumes:
-      - ollama_data:/root/.ollama
+      - llm_ollama_data:/root/.ollama
     networks:
-      - retex-net
+      - ia-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  api:
+    image: nexus.intraknow.net/repository/docker/yieloo-app/ia/builder:3.13-beta-2
+    container_name: ia-api
+    restart: unless-stopped
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ../ia-app/api:/app
+    env_file: .env.app
+    ports:
+      - "8000:8000"
+    networks:
+      - ia-net
+    depends_on:
+      - neo4j
+      - qdrant
+      - ollama
+
+  frontend:
+    image: nexus.intraknow.net/repository/docker/yieloo-app/ia/builder:3.13-beta-2
+    container_name: ia-frontend
+    restart: unless-stopped
+    command: streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --browser.gatherUsageStats=false
+    volumes:
+      - ../ia-app/frontend:/app
+    environment:
+      API_URL: http://ia-api:8000
+    ports:
+      - "8501:8501"
+    networks:
+      - ia-net
+    depends_on:
+      - api
 
 volumes:
   neo4j_data:
-    external: true
-    name: llm_neo4j_data
   neo4j_logs:
-    external: true
-    name: llm_neo4j_logs
   qdrant_data:
-    external: true
-    name: llm_qdrant_data
   ollama_data:
+  llm_ollama_data:
     external: true
-    name: llm_ollama_data
 
 networks:
-  retex-net:
-    name: retex-net
+  ia-net:
+    name: ia-net
