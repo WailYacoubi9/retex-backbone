@@ -71,6 +71,25 @@ services:
               count: all
               capabilities: [gpu]
 
+  # Cross-encoder de re-ranking (TEI) : re-note la pertinence query↔fiche pour la
+  # voie recommandation (précision + abstention propre). Image Ada/L4 (tag 89).
+  reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:89-1.6
+    restart: unless-stopped
+    container_name: ia-reranker
+    command: --model-id BAAI/bge-reranker-v2-m3
+    volumes:
+      - reranker_data:/data
+    networks:
+      - ia-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
   api:
     image: nexus.intraknow.net/repository/docker/yieloo-app/ia/builder:3.13-beta-2
     container_name: ia-api
@@ -79,6 +98,8 @@ services:
     volumes:
       - ../ia-app/api:/app
     env_file: .env.app
+    environment:
+      RERANKER_URL: http://reranker:80
     ports:
       - "8000:8000"
     networks:
@@ -87,6 +108,7 @@ services:
       - neo4j
       - qdrant
       - ollama
+      - reranker
 
   frontend:
     image: nexus.intraknow.net/repository/docker/yieloo-app/ia/builder:3.13-beta-2
@@ -109,6 +131,7 @@ volumes:
   neo4j_logs:
   qdrant_data:
   ollama_data:
+  reranker_data:
   llm_ollama_data:
     external: true
 
